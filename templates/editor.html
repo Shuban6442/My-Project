@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Session {{ session_id }}</title>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs/loader.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-light: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #3b82f6;
+      --border: #2a3342;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: #111827;
+      border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; gap: 10px; }
+    .session-code { background: #1f2937; padding: 4px 8px; border-radius: 6px; }
+    .actions { display: flex; gap: 8px; }
+
+    .container { display: flex; height: calc(100vh - 50px); }
+    .left { flex: 1; display: flex; flex-direction: column; }
+    
+    /* Chat overlay window */
+    #chatOverlay {
+      position: fixed;
+      top: 70px;
+      right: 20px;
+      width: 350px;
+      height: 400px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      z-index: 1000;
+      display: none;
+      flex-direction: column;
+    }
+    #chatOverlay.open { display: flex; }
+    
+    #chatHeader {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel-light);
+      border-radius: 8px 8px 0 0;
+    }
+    #chatClose {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 4px;
+    }
+    #chatClose:hover { color: var(--text); }
+    
+    #chatBox { display: flex; flex-direction: column; height: 100%; flex: 1; }
+    #chatMessages { list-style: none; margin: 0; padding: 12px; flex: 1; overflow-y: auto; font-size: 13px; }
+    #chatMessages li { margin-bottom: 8px; line-height: 1.4; }
+    #chatMessages .meta { font-size: 11px; color: var(--muted); }
+    #chatForm { display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--border); }
+    #chatInput { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 13px; }
+    #sendBtn { padding: 8px 12px; background: var(--accent); border: 1px solid var(--accent); color: white; border-radius: 4px; cursor: pointer; font-size: 13px; }
+    #sendBtn:hover { background: #2563eb; }
+    #sendBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #editor { flex: 1; border-bottom: 1px solid var(--border); }
+    .toolbar { padding: 8px; background: #111827; }
+    .btn {
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #1f2937;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .btn.primary { background: #2563eb; border-color: #2563eb; }
+
+    #output {
+      padding: 10px;
+      background: #0b1220;
+      border-top: 1px solid var(--border);
+      min-height: 80px;
+      white-space: pre-wrap;
+      font-family: monospace;
+    }
+
+    /* Participants drawer */
+    #participantsDrawer {
+      width: 320px;
+      border-left: 1px solid var(--border);
+      background: #0b1220;
+      display: flex;
+      flex-direction: column;
+    }
+    #participantsDrawer.hidden {
+      transform: translateX(100%);
+    }
+    
+    #plist { list-style: none; margin: 0; padding: 12px; flex: 1; overflow-y: auto; }
+    #plist li {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px;
+      margin-bottom: 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #111827;
+    }
+    .p-info { display: flex; flex-direction: column; }
+    .p-name { font-weight: 500; }
+    .p-role { font-size: 12px; color: var(--muted); }
+    .p-actions button {
+      margin-left: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      border-radius: 6px;
+      border: 1px solid #2a3b52;
+      background: #1e293b;
+      color: #e5e7eb;
+      cursor: pointer;
+    }
+    .p-actions button:hover { background: #2563eb; border-color: #2563eb; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <span class="session-code">Session {{ session_id }}</span>
+      <span class="badge">Python</span>
+    </div>
+    <div class="actions">
+      <button id="participantsBtn" class="btn">Participants</button>
+      <button id="chatBtn" class="btn">Chat</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="left">
+      <div id="editor"></div>
+      <div class="toolbar">
+        <button id="runBtn" class="btn primary">Run</button>
+        <button id="clearBtn" class="btn">Clear</button>
+      </div>
+      <div id="output"></div>
+    </div>
+
+    <div id="participantsDrawer">
+      <h3 style="padding:12px; margin:0; border-bottom:1px solid var(--border);">Participants</h3>
+      <ul id="plist"></ul>
+    </div>
+
+    <!-- Chat Overlay -->
+    <div id="chatOverlay">
+      <div id="chatHeader">
+        <h4 style="margin:0; font-size:14px;">Chat</h4>
+        <button id="chatClose">&times;</button>
+      </div>
+      <div id="chatBox">
+        <ul id="chatMessages"></ul>
+        <form id="chatForm">
+          <input id="chatInput" type="text" placeholder="Type a message..." autocomplete="off" />
+          <button id="sendBtn" type="submit">Send</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    const runBtn = document.getElementById("runBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const participantsBtn = document.getElementById("participantsBtn");
+    const chatBtn = document.getElementById("chatBtn");
+    const participantsDrawer = document.getElementById("participantsDrawer");
+    const chatOverlay = document.getElementById("chatOverlay");
+    const chatClose = document.getElementById("chatClose");
+    const chatMessages = document.getElementById("chatMessages");
+    const chatForm = document.getElementById("chatForm");
+    const chatInput = document.getElementById("chatInput");
+    const output = document.getElementById("output");
+    const plist = document.getElementById("plist");
+
+    const sessionId = "{{ session_id }}";
+    const urlParams = new URLSearchParams(window.location.search);
+    const myName = urlParams.get("name") || "Anonymous";
+
+    let myRole = "participant";
+    let mySid = null;
+    let writerId = null;
+    let editor;
+
+    // Load Monaco Editor
+    require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs' }});
+    require(["vs/editor/editor.main"], function () {
+      editor = monaco.editor.create(document.getElementById("editor"), {
+        value: "",
+        language: "python",
+        theme: "vs-dark",
+        automaticLayout: true,
+        readOnly: true
+      });
+
+      // emit typing
+      editor.onDidChangeModelContent(() => {
+        if (mySid && mySid === writerId) {
+          socket.emit("code_change", { session_id: sessionId, content: editor.getValue() });
+        }
+      });
+    });
+
+    // join session
+    socket.emit("join_session", { session_id: sessionId, name: myName });
+
+    // store my socket.id when connected
+    socket.on("connect", () => {
+      mySid = socket.id;
+    });
+
+    // sync code
+    socket.on("code_update", data => {
+      if (editor && mySid !== writerId) {
+        editor.setValue(data.content);
+      }
+    });
+
+    // update participants
+    socket.on("participants_update", data => {
+      plist.innerHTML = "";
+      writerId = data.writer_id;
+      const hostId = data.host_id;
+
+      for (const [sid, info] of Object.entries(data.participants)) {
+        if (sid === mySid) myRole = info.role;
+
+        const li = document.createElement("li");
+
+        // Info
+        const infoDiv = document.createElement("div");
+        infoDiv.className = "p-info";
+        const nameSpan = document.createElement("span");
+        nameSpan.className = "p-name";
+        nameSpan.textContent = info.name + (sid === writerId ? " ✏️" : "");
+        const roleSpan = document.createElement("span");
+        roleSpan.className = "p-role";
+        roleSpan.textContent = info.role;
+        infoDiv.appendChild(nameSpan);
+        infoDiv.appendChild(roleSpan);
+
+        // Actions
+        const actionsDiv = document.createElement("div");
+        actionsDiv.className = "p-actions";
+        if (myRole === "host" && sid !== hostId) {
+          const btn = document.createElement("button");
+          if (sid === writerId) {
+            btn.textContent = "Revoke";
+            btn.onclick = () => socket.emit("revoke_write", { session_id: sessionId });
+          } else {
+            btn.textContent = "Grant";
+            btn.onclick = () => socket.emit("grant_write", { session_id: sessionId, target_sid: sid });
+          }
+          actionsDiv.appendChild(btn);
+        }
+        if (myRole === "participant" && sid === mySid && sid !== writerId) {
+          const reqBtn = document.createElement("button");
+          reqBtn.textContent = "Request Edit";
+          reqBtn.onclick = () => socket.emit("request_write", { session_id: sessionId, name: myName, sid: mySid });
+          actionsDiv.appendChild(reqBtn);
+        }
+
+        li.appendChild(infoDiv);
+        li.appendChild(actionsDiv);
+        plist.appendChild(li);
+      }
+
+      // allow editing only if I'm the writer
+      if (editor) editor.updateOptions({ readOnly: mySid !== writerId });
+    });
+
+    // Run code
+      // Chat toggle
+    chatBtn.onclick = () => {
+      chatOverlay.classList.toggle("open");
+      if (chatOverlay.classList.contains("open")) {
+        chatInput.focus();
+        scrollChat();
+      }
+    };
+
+    chatClose.onclick = () => {
+      chatOverlay.classList.remove("open");
+    };
+
+    // Close chat when clicking outside
+    document.addEventListener("click", (e) => {
+      if (chatOverlay.classList.contains("open") && 
+          !chatOverlay.contains(e.target) && 
+          !chatBtn.contains(e.target)) {
+        chatOverlay.classList.remove("open");
+      }
+    });
+
+    // Participants toggle
+    participantsBtn.onclick = () => {
+      participantsDrawer.classList.toggle("hidden");
+    };
+
+    // Chat history
+      socket.on("chat_history", data => {
+        chatMessages.innerHTML = "";
+        data.messages.forEach(renderMessage);
+        scrollChat();
+      });
+
+      // Incoming single message
+      socket.on("chat_message", msg => {
+        renderMessage(msg);
+        scrollChat();
+      });
+
+      function renderMessage(m) {
+        const li = document.createElement("li");
+        const time = new Date(m.ts * 1000).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+        li.innerHTML = `<span class="meta">[${time}] <strong>${escapeHtml(m.name)}</strong>:</span> ${escapeHtml(m.msg)}`;
+        chatMessages.appendChild(li);
+      }
+
+      function scrollChat() {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+
+      function escapeHtml(str) {
+        return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+      }
+
+      chatForm.addEventListener("submit", e => {
+        e.preventDefault();
+        const text = chatInput.value.trim();
+        if(!text) return;
+        socket.emit("send_message", { session_id: sessionId, message: text, name: myName });
+        chatInput.value = "";
+      });
+
+      // Run code
+    runBtn.onclick = async () => {
+      const resp = await fetch("/run_code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: editor.getValue() })
+      });
+      const data = await resp.json();
+      output.textContent = data.output;
+    };
+
+    // Clear code
+    clearBtn.onclick = () => {
+      if (mySid === writerId) {
+        editor.setValue("");
+        socket.emit("code_change", { session_id: sessionId, content: "" });
+      }
+    };
+  </script>
+</body>
+</html>

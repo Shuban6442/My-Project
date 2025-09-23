@@ -1,0 +1,31 @@
+# Python / Virtualenv
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Bytecode cache
+*.python-version
+
+# VS Code
+.vscode/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Logs / temp
+*.log
+*.tmp
+
+# Packaging
+build/
+dist/
+*.egg-info/
+
+# PyInstaller
+*.spec
+
+# Environment variables file (if added later)
+.env
